@@ -39,3 +39,10 @@ luac.out
 *.x86_64
 *.hex
 
+# Autosave files
+*~
+*/#*
+*/.#*
+
+# Finder files
+.DS_Store
