@@ -1,0 +1,1340 @@
+You and I are working on the Advent of Code programming challenge, day 7.  We are programming in the Lua programming language. You are my expert programming assistant. I need you to provide me with clean, clear and elegant solutions in Lua code to the programming problems I pose you and I will help direct, debug and for sure also contribute some code when the situations get especially tricky.  We are a great team and between us we are going to have a good time and code up great solutions to the two Day 7 challenges!
+
+The following is a description of the first part:
+
+--- Day 7: Bridge Repair ---
+
+The Historians take you to a familiar rope bridge over a river in the middle of a jungle. The Chief isn't on this side of the bridge, though; maybe he's on the other side?
+
+When you go to cross the bridge, you notice a group of engineers trying to repair it. (Apparently, it breaks pretty frequently.) You won't be able to cross until it's fixed.
+
+You ask how long it'll take; the engineers tell you that it only needs final calibrations, but some young elephants were playing nearby and stole all the operators from their calibration equations! They could finish the calibrations if only someone could determine which test values could possibly be produced by placing any combination of operators into their calibration equations (your puzzle input).
+
+For example:
+
+190: 10 19
+3267: 81 40 27
+83: 17 5
+156: 15 6
+7290: 6 8 6 15
+161011: 16 10 13
+192: 17 8 14
+21037: 9 7 18 13
+292: 11 6 16 20
+Each line represents a single equation. The test value appears before the colon on each line; it is your job to determine whether the remaining numbers can be combined with operators to produce the test value.
+
+Operators are always evaluated left-to-right, not according to precedence rules. Furthermore, numbers in the equations cannot be rearranged. Glancing into the jungle, you can see elephants holding two different types of operators: add (+) and multiply (*).
+
+Only three of the above equations can be made true by inserting operators:
+
+190: 10 19 has only one position that accepts an operator: between 10 and 19. Choosing + would give 29, but choosing * would give the test value (10 * 19 = 190).
+3267: 81 40 27 has two positions for operators. Of the four possible configurations of the operators, two cause the right side to match the test value: 81 + 40 * 27 and 81 * 40 + 27 both equal 3267 (when evaluated left-to-right)!
+292: 11 6 16 20 can be solved in exactly one way: 11 + 6 * 16 + 20.
+The engineers just need the total calibration result, which is the sum of the test values from just the equations that could possibly be true. In the above example, the sum of the test values for the three equations listed above is 3749.
+
+Determine which equations could possibly be true. What is their total calibration result?
+
+
+
+Our library files look like this:
+
+file.lua:
+local open = io.open
+
+function read_file(path)
+    local file = open(path, "rb")  -- r read mode and b binary mode
+    if not file then return nil end
+    local content = file:read "*a" -- *a or *all reads the whole file
+    file:close()
+    return content
+end
+
+function read_input_line(filename)
+    local file = io.open(filename, "r")
+    if not file then
+        return nil, "Could not open input.txt"
+    end
+    local line = file:read("*l")
+    file:close()
+    return line
+end
+
+-- see if the file exists
+function file_exists(file)
+    local f = io.open(file, "rb")
+    if f then f:close() end
+    return f ~= nil
+end
+
+-- get all lines from a file, returns an empty
+-- list/table if the file does not exist
+function lines_from(file)
+    if not file_exists(file) then return {} end
+    local lines = {}
+    for line in io.lines(file) do
+        lines[#lines + 1] = line
+    end
+    return lines
+end
+
+function number_from(line)
+    _, _, num = string.find(line, "(%d+)")
+    if num then
+        return tonumber(num)
+    else
+        return nil
+    end
+end
+
+function numbers_from(line)
+    local result = {}
+    for n in string.gmatch(line, "%d+") do
+        local num_n = tonumber(n)
+        if num_n then
+            table.insert(result, num_n)
+        end
+    end
+    return result
+end
+
+
+util.lua:
+
+function map(collection, func)
+   local result = {}
+   for k, v in pairs(collection) do
+      result[k] = func(v)
+   end
+   return result
+end
+
+function reduce(collection, initial, func)
+    local result = initial
+    for k, v in pairs(collection) do
+        result = func(result, v)
+    end
+    return result
+end
+
+function sum(collection)
+    return reduce(collection, 0, function (acc, next)
+        return acc + next
+    end )
+end
+
+function equal_simple(t1, t2)
+   if #t1 == #t2 then
+      for i=1,#t1 do
+	 if not (t1[i] == t2[i]) then return false end
+      end
+      return true
+   else
+      return false
+   end
+end
+
+function copy_simple(t)
+   local result = {}
+   for k, v in pairs(t) do
+      result[k] = v
+   end
+   return result
+end
+
+function print_simple_table(t)
+   for k, v in pairs(t) do
+      print("[" .. tostring(k) .. "]: " .. tostring(v))
+   end
+   print(" ")
+end
+
+function print_number_lines(lines)
+    for line_num, line in ipairs(lines) do
+        io.write("Line " .. line_num .. ": ")
+        for i, num in ipairs(line) do
+            io.write(num)
+            if i < #line then
+                io.write(" ")
+            end
+        end
+        io.write("\n")
+    end
+end
+
+
+-- could be a filter?
+function skip_idx_table(t, s)
+   local result = {}
+   local i = 1
+   for k, v in pairs(t) do
+      if not (k == s) then
+	 result[i] = v
+	 i = i + 1
+      end
+   end
+   return result
+end
+
+
+We'll start with the following preamble:
+--- Day_07.lua
+package.path = package.path .. ";../lib/?.lua"
+require "file"
+require "util"
+
+
+Ok, so after reading the example, it seems clear that we could try to brute force the operators.  If we have lines with 2 to 4 numbers, then we'll have to try pow(2, 1..3) so maximum 8 different combinations per line.  However, I'm worried about combinatorial explosion as we process the real inputs where an example line looks like this:
+
+7457856118: 56 6 4 4 5 180 496 58 2
+
+Which has 9 operands,, 8 operators.  Yielding 2^8 choices = 256 choices, right?  Maybe not too bad for a modern M4 Pro Mac mini at 4.0Ghz (which I'm running this on).
+
+What do you think?
+
+You're on the right track with your analysis. Let's break this down:
+
+1. For a line with n numbers, we'll need (n-1) operators
+2. Each operator position can be either '+' or '*'
+3. Total combinations would indeed be 2^(n-1)
+
+Even with your example line having 256 combinations, modern computers can handle this quite efficiently, especially in a compiled language. While Lua is interpreted, it's still quite fast for this scale of computation.
+
+Let's start by writing a solution that:
+1. Parses each line into a test value and a list of numbers
+2. Generates all possible operator combinations
+3. Evaluates each combination
+4. Checks if any combination produces the target value
+
+Here's a starting point:
+
+```lua
+function parse_line(line)
+    local test_value, rest = line:match("(%d+): (.*)")
+    local numbers = numbers_from(rest)
+    return tonumber(test_value), numbers
+end
+
+function generate_operator_combinations(n)
+    local combinations = {}
+    local total = 2^n
+    for i = 0, total-1 do
+        local combo = {}
+        for j = 1, n do
+            -- Use bit operations to determine + or *
+            if i & (1 << (j-1)) == 0 then
+                combo[j] = "+"
+            else
+                combo[j] = "*"
+            end
+        end
+        table.insert(combinations, combo)
+    end
+    return combinations
+end
+
+function evaluate_expression(numbers, operators)
+    local result = numbers[1]
+    for i = 1, #operators do
+        if operators[i] == "+" then
+            result = result + numbers[i+1]
+        else
+            result = result * numbers[i+1]
+        end
+    end
+    return result
+end
+```
+
+Would you like me to continue with the main solution that uses these functions? Also, let me know if you'd like to modify any part of this approach.
+
+The nice thing about this solution is that it's straightforward and will work for any reasonable input size. For your example with 9 numbers (8 operators), it would need to evaluate 256 combinations per line, which should complete in milliseconds.
+
+This is great so far, could you help me write a function that takes a line and determines whether any of the expressions solve the equation?
+
+Here's a function that determines if a line has any valid solutions:
+
+```lua
+function has_valid_solution(line)
+    local test_value, numbers = parse_line(line)
+    local num_operators = #numbers - 1
+    local operator_combinations = generate_operator_combinations(num_operators)
+
+    -- Try each combination of operators
+    for _, operators in ipairs(operator_combinations) do
+        local result = evaluate_expression(numbers, operators)
+        if result == test_value then
+            return true
+        end
+    end
+
+    return false
+end
+```
+
+And we could extend it to also show the solution(s) if needed:
+
+```lua
+function find_solutions(line)
+    local test_value, numbers = parse_line(line)
+    local num_operators = #numbers - 1
+    local operator_combinations = generate_operator_combinations(num_operators)
+    local solutions = {}
+
+    -- Try each combination of operators
+    for _, operators in ipairs(operator_combinations) do
+        local result = evaluate_expression(numbers, operators)
+        if result == test_value then
+            table.insert(solutions, operators)
+        end
+    end
+
+    return solutions, test_value, numbers
+end
+
+-- Optional helper to print solutions
+function print_solution(line)
+    local solutions, test_value, numbers = find_solutions(line)
+    if #solutions > 0 then
+        print(string.format("Line %s: %d solution(s)", line, #solutions))
+        for _, ops in ipairs(solutions) do
+            -- Construct and print the expression
+            local expr = tostring(numbers[1])
+            for i = 1, #ops do
+                expr = expr .. " " .. ops[i] .. " " .. tostring(numbers[i+1])
+            end
+            print(string.format("  %s = %d", expr, test_value))
+        end
+    else
+        print(string.format("Line %s: No solutions", line))
+    end
+end
+```
+
+You can then use these functions to solve the main problem. For example:
+
+```lua
+local lines = lines_from("input.txt")
+local total = 0
+
+for _, line in ipairs(lines) do
+    local test_value, _ = parse_line(line)
+    if has_valid_solution(line) then
+        total = total + test_value
+    end
+end
+
+print("Total:", total)
+```
+
+Would you like to test this with some sample input to see if it works as expected?
+
+I am trying to test this on the test_input, declared like this:
+```lua
+local test_input = [[
+190: 10 19
+3267: 81 40 27
+83: 17 5
+156: 15 6
+7290: 6 8 6 15
+161011: 16 10 13
+192: 17 8 14
+21037: 9 7 18 13
+292: 11 6 16 20
+]]
+```
+How do I split this in to separate lines to feed into the solution you gave me above?
+
+
+In Lua, you can split a multi-line string into separate lines using `gmatch`. Here's how you can modify the code to work with the test input:
+
+```lua
+local test_input = [[
+190: 10 19
+3267: 81 40 27
+83: 17 5
+156: 15 6
+7290: 6 8 6 15
+161011: 16 10 13
+192: 17 8 14
+21037: 9 7 18 13
+292: 11 6 16 20
+]]
+
+-- Convert the test_input string into a table of lines
+local lines = {}
+for line in test_input:gmatch("[^\r\n]+") do
+    table.insert(lines, line)
+end
+
+-- Now process each line
+local total = 0
+for _, line in ipairs(lines) do
+    local test_value, _ = parse_line(line)
+    if has_valid_solution(line) then
+        total = total + test_value
+        -- Optionally print the solutions for debugging
+        print_solution(line)
+    end
+end
+
+print("Total:", total)
+```
+
+This should process each line of your test input and give you the expected result of 3749. The `[^\r\n]+` pattern in `gmatch` matches any sequence of characters that aren't line breaks, effectively splitting the string into lines.
+
+Ok, this is looking good.  The output is:
+```
+Line 190: 10 19: 1 solution(s)
+  10 * 19 = 190
+Line 3267: 81 40 27: 2 solution(s)
+  81 * 40 + 27 = 3267
+  81 + 40 * 27 = 3267
+Line 83: 17 5: No solutions
+Line 156: 15 6: No solutions
+Line 7290: 6 8 6 15: No solutions
+Line 161011: 16 10 13: No solutions
+Line 192: 17 8 14: No solutions
+Line 21037: 9 7 18 13: No solutions
+Line 292: 11 6 16 20: 1 solution(s)
+  11 + 6 * 16 + 20 = 292
+Total:	3749
+```
+I'll try it on the input.txt now
+
+Great! The output matches exactly with the example in the problem description. The three equations that can be made true are correctly identified:
+
+1. 190 = 10 * 19
+2. 3267 = 81 * 40 + 27 (or 81 + 40 * 27)
+3. 292 = 11 + 6 * 16 + 20
+
+And the total (190 + 3267 + 292 = 3749) is correct.
+
+Go ahead and try it with input.txt. The solution should handle it fine, even with longer equations, since we're only dealing with 2^8 = 256 combinations at most per line. Let me know if you run into any issues with the full input or if you'd like to optimize anything about the solution.
+
+Here's the output, pretty snappy if I do say so myself!
+```
+➜  07 git:(main) ✗ time lua Day_07.lua
+Total:	6392012777720
+lua Day_07.lua  0.16s user 0.01s system 99% cpu 0.173 total
+```
+
+
+That's excellent! The solution is indeed very efficient, completing in just 0.16 seconds. This confirms our initial assessment that even with longer equations (like your example with 8 operators requiring 256 combinations), the brute force approach would be more than fast enough.
+
+To break down why it worked so well:
+1. The bit manipulation for generating combinations was efficient
+2. The left-to-right evaluation is straightforward and fast
+3. Modern hardware can easily handle this level of computation
+4. Lua's implementation is quite efficient for this kind of numerical computation
+
+Would you like to move on to Part 2 of the challenge? Or would you like to explore any optimizations or alternative approaches to Part 1 first? For instance, we could add some instrumentation to see which lines required the most combinations to solve, or analyze the distribution of solutions across the input.
+
+Yes!  Ok Here's the description for part 2:
+
+--- Part Two ---
+
+The engineers seem concerned; the total calibration result you gave them is nowhere close to being within safety tolerances. Just then, you spot your mistake: some well-hidden elephants are holding a third type of operator.
+
+The concatenation operator (||) combines the digits from its left and right inputs into a single number. For example, 12 || 345 would become 12345. All operators are still evaluated left-to-right.
+
+Now, apart from the three equations that could be made true using only addition and multiplication, the above example has three more equations that can be made true by inserting operators:
+
+156: 15 6 can be made true through a single concatenation: 15 || 6 = 156.
+7290: 6 8 6 15 can be made true using 6 * 8 || 6 * 15.
+192: 17 8 14 can be made true using 17 || 8 + 14.
+Adding up all six test values (the three that could be made before using only + and * plus the new three that can now be made by also using ||) produces the new total calibration result of 11387.
+
+Using your new knowledge of elephant hiding spots, determine which equations could possibly be true. What is their total calibration result?
+
+
+
+Interesting! Now we need to add the concatenation operator to our mix, which makes things more complex because concatenation changes the way numbers are combined. Let's modify our solution:
+
+1. First, let's update our operator generation function to include the concatenation operator:
+
+```lua
+function generate_operator_combinations(n)
+    local combinations = {}
+    local total = 3^n  -- Now we have 3 operators instead of 2
+    for i = 0, total-1 do
+        local combo = {}
+        for j = 1, n do
+            -- Use division and modulo to determine operator
+            local op_code = math.floor(i / (3^(j-1))) % 3
+            if op_code == 0 then
+                combo[j] = "+"
+            elseif op_code == 1 then
+                combo[j] = "*"
+            else
+                combo[j] = "||"
+            end
+        end
+        table.insert(combinations, combo)
+    end
+    return combinations
+end
+
+function evaluate_expression(numbers, operators)
+    local result = numbers[1]
+    for i = 1, #operators do
+        if operators[i] == "+" then
+            result = result + numbers[i+1]
+        elseif operators[i] == "*" then
+            result = result * numbers[i+1]
+        else  -- concatenation
+            result = tonumber(tostring(result) .. tostring(numbers[i+1]))
+        end
+    end
+    return result
+end
+```
+
+The main changes are:
+1. We now use base-3 for operator combinations (3^n combinations instead of 2^n)
+2. Added concatenation operator handling in evaluate_expression
+3. The rest of our code should work as-is!
+
+Would you like to test this with the example input to see if it produces the correct result of 11387?
+
+I'll try this, but I'm wondering if we shouldn't instead try this by manually applying the concat operator at each position and then running the original evaluate_expression
+
+Yep, looks like your solution works.  Do you think my suggestion would be faster or slower and why?
+
+Your suggestion is quite interesting! Let's analyze both approaches:
+
+Current approach (using 3^n combinations):
+- For n numbers (n-1 operators), we try 3^(n-1) combinations
+- For a line with 9 numbers (8 operators), that's 3^8 = 6561 combinations to try
+- Each evaluation is simple and fast
+
+Your suggested approach (recursive concat + binary operators):
+- For each position, we try concatenating the number with the next one
+- After each concatenation, we'd have a shorter sequence to evaluate with just + and *
+- For n numbers, we'd have n-1 possible concat positions
+- For each concat attempt, we'd then run our original 2^m combinations (where m is reduced by the concat)
+
+Let's rough out the math for a 9-number sequence:
+1. Original: 3^8 = 6561 evaluations
+2. Your approach:
+   - Try concat at position 1: reduces to 7 numbers → 2^6 = 64 combinations
+   - Try concat at position 2: reduces to 7 numbers → 2^6 = 64 combinations
+   - ... and so on for 8 positions
+   - Total ≈ 8 * 64 = 512 evaluations
+
+Your approach would be significantly faster! It reduces the combinatorial explosion from 3^n to roughly n * 2^(n-2).
+
+Would you like me to help implement your suggested approach?
+
+I'm running your method now, and it is taking quite a while.  It finished finally:
+```
+➜  07 git:(main) ✗ time lua Day_07.lua
+Part 1:	6392012777720
+Part 2:	61561126043536
+lua Day_07.lua  21.53s user 0.67s system 99% cpu 22.212 total
+```
+
+Wow, that's quite a difference - from 0.16 seconds in Part 1 to over 21 seconds in Part 2! This clearly demonstrates the combinatorial explosion problem with the 3^n approach.
+
+Let's implement your suggested approach. Here's how we could do it:
+
+```lua
+function try_concat(numbers, start_idx)
+    if start_idx >= #numbers then return numbers end
+
+    -- Create new array with concatenated number at position
+    local new_numbers = {}
+    for i = 1, start_idx - 1 do
+        new_numbers[i] = numbers[i]
+    end
+    -- Concatenate numbers at position
+    new_numbers[start_idx] = tonumber(tostring(numbers[start_idx]) .. tostring(numbers[start_idx + 1]))
+    -- Add remaining numbers
+    for i = start_idx + 2, #numbers do
+        new_numbers[#new_numbers + 1] = numbers[i]
+    end
+    return new_numbers
+end
+
+function has_valid_solution_v2(line)
+    local test_value, numbers = parse_line(line)
+
+    -- First try original +/* solution
+    if has_valid_solution(line) then
+        return true
+    end
+
+    -- Try concatenating at each position
+    for i = 1, #numbers - 1 do
+        local concat_numbers = try_concat(numbers, i)
+        -- Now try all +/* combinations on this shortened sequence
+        local num_operators = #concat_numbers - 1
+        local operator_combinations = generate_operator_combinations(num_operators)
+
+        for _, operators in ipairs(operator_combinations) do
+            local result = evaluate_expression(concat_numbers, operators)
+            if result == test_value then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+```
+
+This should run much faster as we're now dealing with:
+1. One pass of 2^(n-1) combinations for the original +/* check
+2. Plus (n-1) passes of 2^(m-1) combinations where m is always less than n
+
+Would you like to try this version and compare the running time?
+
+So it is faster, but it gives a different answer:
+
+```
+➜  07 git:(main) ✗ time lua Day_07.lua
+Part 1:	6392012777720
+Part 2:	6461029570856
+lua Day_07.lua  0.76s user 0.03s system 99% cpu 0.789 total
+```
+One of them has to be wrong, right?
+
+Yes, one of them must be wrong. The fact that the second approach runs much faster (0.76s vs 21.53s) is good, but we need to verify which answer is correct. Let's debug this by:
+
+1. Testing both approaches with the example input where we know the answer should be 11387
+2. Looking at specific cases where the two approaches differ
+3. Making sure our concatenation logic is working exactly as specified
+
+Here's some debug code we can add:
+
+```lua
+function print_solution_v2(line)
+    local test_value, numbers = parse_line(line)
+
+    -- Try original +/* solution
+    local solutions1, _, _ = find_solutions(line)
+    if #solutions1 > 0 then
+        print(string.format("Line %s: Found +/* solutions", line))
+        for _, ops in ipairs(solutions1) do
+            local expr = tostring(numbers[1])
+            for i = 1, #ops do
+                expr = expr .. " " .. ops[i] .. " " .. tostring(numbers[i+1])
+            end
+            print(string.format("  %s = %d", expr, test_value))
+        end
+    end
+
+    -- Try concatenation solutions
+    for i = 1, #numbers - 1 do
+        local concat_numbers = try_concat(numbers, i)
+        local num_operators = #concat_numbers - 1
+        local operator_combinations = generate_operator_combinations(num_operators)
+
+        for _, operators in ipairs(operator_combinations) do
+            local result = evaluate_expression(concat_numbers, operators)
+            if result == test_value then
+                print(string.format("Line %s: Found concat solution at position %d", line, i))
+                local expr = tostring(concat_numbers[1])
+                for j = 1, #operators do
+                    expr = expr .. " " .. operators[j] .. " " .. tostring(concat_numbers[j+1])
+                end
+                print(string.format("  %s = %d", expr, test_value))
+            end
+        end
+    end
+end
+```
+
+Could you run this with the example input and we can see which approach matches the expected behavior from the problem description?
+
+It looks like this approach leaves a lot of the possible concatenations on the table.  We need to instead try every possible combination of concatenations.  That would be 2^(n-1) possible concatenations per line, and then 2((n-m)-1) possible operators for the result of that concatenation.  So if 2^(n-1 + n - m - 1) is less than 3^(n-1) then we would save time, but to be honest this solution is now getting more complicated than it's maybe worth.
+
+Ah, you're absolutely right! I see my mistake now. For example, with the sequence "17 8 14", we need to consider:
+- 17 || 8 + 14  (which we found)
+- But also possibilities like 17 + 8 || 14
+- And even (17 || 8) || 14
+
+You're right that we'd need to consider every possible combination of concatenations (2^(n-1)) and then for each of those configurations, try all possible +/* combinations on the resulting sequence.
+
+The math checks out that this would still be faster than 3^(n-1), but the code complexity would increase significantly. We'd need to:
+1. Generate all possible concatenation patterns (using similar bit manipulation to our operator generation)
+2. Apply those concatenations to create new number sequences
+3. Then try all +/* combinations on each resulting sequence
+
+Given that the brute force 3^(n-1) solution, while slower, is:
+1. Already working correctly
+2. Much simpler to understand and maintain
+3. Still completes in a reasonable time (21 seconds isn't great, but it's acceptable for a one-off solution)
+
+Would you prefer to stick with the simpler 3^n solution? Sometimes the clearer solution is better than a more optimized but complex one, especially for puzzle-solving contexts like this.
+
+Just for grins, lets see how much faster the fixed version of my solution would be
+
+Absolutely! Here's how we could implement the "try all possible concatenation patterns" approach:
+
+```lua
+function apply_concatenations(numbers, pattern)
+    local result = {}
+    local i = 1
+    local current = numbers[1]
+
+    for pos = 1, #numbers - 1 do
+        if pattern[pos] == "||" then
+            -- Concatenate with next number
+            current = tonumber(tostring(current) .. tostring(numbers[pos + 1]))
+        else
+            -- Store current number and move to next
+            result[i] = current
+            i = i + 1
+            current = numbers[pos + 1]
+        end
+    end
+    -- Don't forget to add the last number
+    result[i] = current
+
+    return result
+end
+
+function generate_concat_patterns(n)
+    local patterns = {}
+    local total = 2^n
+    for i = 0, total-1 do
+        local pattern = {}
+        for j = 1, n do
+            if i & (1 << (j-1)) == 0 then
+                pattern[j] = "none"
+            else
+                pattern[j] = "||"
+            end
+        end
+        table.insert(patterns, pattern)
+    end
+    return patterns
+end
+
+function has_valid_solution_v3(line)
+    local test_value, numbers = parse_line(line)
+    local concat_patterns = generate_concat_patterns(#numbers - 1)
+
+    for _, pattern in ipairs(concat_patterns) do
+        local concat_numbers = apply_concatenations(numbers, pattern)
+        local num_operators = #concat_numbers - 1
+        if num_operators > 0 then
+            local operator_combinations = generate_operator_combinations(num_operators)
+
+            for _, operators in ipairs(operator_combinations) do
+                local result = evaluate_expression(concat_numbers, operators)
+                if result == test_value then
+                    return true
+                end
+            end
+        else
+            -- Handle case where everything was concatenated into one number
+            if concat_numbers[1] == test_value then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+```
+
+Let's run this and compare the execution time with both previous versions. I've also added some debug code that we can use if needed:
+
+```lua
+function print_solution_v3(line)
+    local test_value, numbers = parse_line(line)
+    local concat_patterns = generate_concat_patterns(#numbers - 1)
+
+    for _, pattern in ipairs(concat_patterns) do
+        local concat_numbers = apply_concatenations(numbers, pattern)
+        local num_operators = #concat_numbers - 1
+        if num_operators > 0 then
+            local operator_combinations = generate_operator_combinations(num_operators)
+
+            for _, operators in ipairs(operator_combinations) do
+                local result = evaluate_expression(concat_numbers, operators)
+                if result == test_value then
+                    print(string.format("Found solution for %s", line))
+                    -- Print the pattern and operators used
+                    local expr = table.concat(concat_numbers, " ")
+                    print(string.format("  After concat: %s", expr))
+                    print(string.format("  With operators: %s", table.concat(operators, " ")))
+                end
+            end
+        elseif concat_numbers[1] == test_value then
+            print(string.format("Found pure concat solution for %s", line))
+        end
+    end
+end
+```
+
+Would you like to try this version and see how it performs?
+
+I just tried it, and based on the sample input
+```
+190: 10 19
+3267: 81 40 27
+83: 17 5
+156: 15 6
+7290: 6 8 6 15
+161011: 16 10 13
+192: 17 8 14
+21037: 9 7 18 13
+292: 11 6 16 20
+```
+we fail to find that 7290: 6 8 6 15 can now be solved
+``` 7290: 6 8 6 15 can be made true using 6 * 8 || 6 * 15 ```
+in fact, it appears that we are also double-counting numbers that had a part 1 solution:
+
+```
+Found solution for 190: 10 19
+  After concat: 10 19
+  With operators: *
+Found solution for 3267: 81 40 27
+  After concat: 81 40 27
+  With operators: * +
+Found solution for 3267: 81 40 27
+  After concat: 81 40 27
+  With operators: + *
+Found pure concat solution for 156: 15 6
+Found solution for 192: 17 8 14
+  After concat: 178 14
+  With operators: +
+Found solution for 292: 11 6 16 20
+  After concat: 11 6 16 20
+  With operators: + * +
+Part 2:	4097
+```
+
+
+Ah, I see the issue. Two problems:
+
+1. We're not handling the operators correctly in conjunction with concatenation. In the example `6 * 8 || 6 * 15`, we need to:
+   - First evaluate `6 * 8` to get 48
+   - Then evaluate `6 * 15` to get 90
+   - Then concatenate 48 and 90 to get 4890
+
+2. We're mixing up our Part 1 and Part 2 solutions, leading to double-counting.
+
+Let's modify the solution to handle these cases correctly:
+
+```lua
+function evaluate_with_concat(numbers, pattern, operators)
+    local segments = {}  -- Will hold the results of each segment between concatenations
+    local current_segment = {numbers[1]}
+    local op_index = 1
+
+    for i = 1, #pattern do
+        if pattern[i] == "||" then
+            -- Evaluate current segment
+            if #current_segment > 1 then
+                local result = current_segment[1]
+                for j = 1, #current_segment - 1 do
+                    if operators[op_index] == "+" then
+                        result = result + current_segment[j+1]
+                    else  -- "*"
+                        result = result * current_segment[j+1]
+                    end
+                    op_index = op_index + 1
+                end
+                segments[#segments + 1] = result
+            else
+                segments[#segments + 1] = current_segment[1]
+            end
+            current_segment = {numbers[i+1]}
+        else
+            current_segment[#current_segment + 1] = numbers[i+1]
+        end
+    end
+
+    -- Handle last segment
+    if #current_segment > 1 then
+        local result = current_segment[1]
+        for j = 1, #current_segment - 1 do
+            if operators[op_index] == "+" then
+                result = result + current_segment[j+1]
+            else  -- "*"
+                result = result * current_segment[j+1]
+            end
+            op_index = op_index + 1
+        end
+        segments[#segments + 1] = result
+    else
+        segments[#segments + 1] = current_segment[1]
+    end
+
+    -- Concatenate all segments
+    local final_result = segments[1]
+    for i = 2, #segments do
+        final_result = tonumber(tostring(final_result) .. tostring(segments[i]))
+    end
+
+    return final_result
+end
+```
+
+And we need to modify our solution checking to:
+1. Keep Part 1 and Part 2 solutions separate
+2. Only count new solutions in Part 2 that weren't possible in Part 1
+
+Would you like me to update the rest of the code to implement these changes?
+
+Yes please
+
+Here's the updated solution that should handle both parts correctly:
+
+```lua
+function has_valid_part1_solution(line)
+    local test_value, numbers = parse_line(line)
+    local num_operators = #numbers - 1
+    local operator_combinations = generate_operator_combinations(num_operators)
+
+    for _, operators in ipairs(operator_combinations) do
+        local result = evaluate_expression(numbers, operators)
+        if result == test_value then
+            return true
+        end
+    end
+
+    return false
+end
+
+function has_valid_part2_solution(line)
+    if has_valid_part1_solution(line) then
+        return false  -- Don't count solutions that were possible in part 1
+    end
+
+    local test_value, numbers = parse_line(line)
+    local concat_patterns = generate_concat_patterns(#numbers - 1)
+
+    for _, pattern in ipairs(concat_patterns) do
+        -- Skip the pattern where no concatenations happen
+        if not (pattern[1] == "none" and #pattern == 1) then
+            -- For each segment between concatenations, we need operators
+            local remaining_ops = count_segments(pattern) - 1
+            if remaining_ops >= 0 then
+                local op_combinations = generate_operator_combinations(remaining_ops)
+
+                for _, operators in ipairs(op_combinations) do
+                    local result = evaluate_with_concat(numbers, pattern, operators)
+                    if result == test_value then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+function count_segments(pattern)
+    local count = 1
+    for _, op in ipairs(pattern) do
+        if op == "||" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- Main solution
+local lines = lines_from("input.txt")  -- or use test_input split into lines
+local part1_total = 0
+local part2_total = 0
+
+for _, line in ipairs(lines) do
+    local test_value, _ = parse_line(line)
+    if has_valid_part1_solution(line) then
+        part1_total = part1_total + test_value
+    elseif has_valid_part2_solution(line) then
+        part2_total = part2_total + test_value
+    end
+end
+
+print("Part 1:", part1_total)
+print("Part 2:", part1_total + part2_total)  -- Total of all valid solutions
+
+-- Debug function for testing
+function print_all_solutions(line)
+    local test_value, numbers = parse_line(line)
+    print("Testing line:", line)
+
+    if has_valid_part1_solution(line) then
+        print("  Has Part 1 solution")
+    end
+
+    local concat_patterns = generate_concat_patterns(#numbers - 1)
+    for _, pattern in ipairs(concat_patterns) do
+        if not (pattern[1] == "none" and #pattern == 1) then
+            local remaining_ops = count_segments(pattern) - 1
+            if remaining_ops >= 0 then
+                local op_combinations = generate_operator_combinations(remaining_ops)
+
+                for _, operators in ipairs(op_combinations) do
+                    local result = evaluate_with_concat(numbers, pattern, operators)
+                    if result == test_value then
+                        print("  Found Part 2 solution:")
+                        print("    Pattern:", table.concat(pattern, " "))
+                        print("    Operators:", table.concat(operators, " "))
+                        print("    Result:", result)
+                    end
+                end
+            end
+        end
+    end
+end
+```
+
+This version should:
+1. Correctly identify Part 1 solutions using only + and *
+2. Only count new solutions in Part 2 that weren't possible in Part 1
+3. Properly handle cases like `6 * 8 || 6 * 15`
+4. Avoid double-counting
+
+Would you like to test this with the example input to verify it gives the correct result of 11387?
+
+
+has_valid_part2_solution is crashing, here's the backtrace:
+```
+Part 1:	3749
+lua: Day_07.lua:364: attempt to call a nil value (global 'generate_concat_patterns')
+stack traceback:
+	Day_07.lua:364: in function 'has_valid_part2_solution'
+	Day_07.lua:406: in main chunk
+	[C]: in ?
+lua Day_07.lua  0.00s user 0.00s system 79% cpu 0.005 total
+```
+
+
+Ah sorry, I forgot to include the generate_concat_patterns function in the final solution! Here it is:
+
+```lua
+function generate_concat_patterns(n)
+    local patterns = {}
+    local total = 2^n
+    for i = 0, total-1 do
+        local pattern = {}
+        for j = 1, n do
+            -- Use bit operations to determine concatenation or not
+            if i & (1 << (j-1)) == 0 then
+                pattern[j] = "none"
+            else
+                pattern[j] = "||"
+            end
+        end
+        table.insert(patterns, pattern)
+    end
+    return patterns
+end
+```
+
+And we should also make sure we have the updated generate_operator_combinations function that only generates + and * operators (not ||):
+
+```lua
+function generate_operator_combinations(n)
+    local combinations = {}
+    local total = 2^n
+    for i = 0, total-1 do
+        local combo = {}
+        for j = 1, n do
+            if i & (1 << (j-1)) == 0 then
+                combo[j] = "+"
+            else
+                combo[j] = "*"
+            end
+        end
+        table.insert(combinations, combo)
+    end
+    return combinations
+end
+```
+
+Now it should run without crashing. Let's try it with the example input to make sure it correctly identifies all six valid equations and produces the total of 11387.
+
+Yeah, it still doesn't work, and after running it on the main input, I don't think it's faster at all (possibly slower because of all of the extra work we are doing building the concat tables).  Let's scrap this and go with your first 3^(n-1) approach, which is both cleaner and gives the correct result
+
+You're absolutely right. Sometimes the seemingly more complex optimization ends up being both harder to implement correctly and not actually faster. The original 3^(n-1) approach has several advantages:
+
+1. It's much simpler and easier to understand
+2. We know it works correctly (giving us the right answer)
+3. While it takes 21 seconds, that's still reasonable for a one-off puzzle solution
+4. The code is much cleaner and more maintainable
+
+Let's go back to the original solution where we simply:
+1. Use three operators (+, *, ||) in generate_operator_combinations
+2. Handle all operators uniformly in evaluate_expression
+3. Use the simple 3^(n-1) combinatorial approach
+
+Would you like me to post that clean, working version again for reference?
+
+The main takeaway here is that sometimes the straightforward solution, even if not the most theoretically efficient, is the better choice - especially when it's already proven to work correctly!
+
+I suppose if we wanted to, we could parallelize our solution to part 2 which would speed it up by a factor of 10 or 12 because of the number of processor cores my machine has
+
+
+Yes, that's a great observation! Lua has a few options for parallelization, and this problem is particularly well-suited for it because:
+
+1. Each line can be processed independently (embarrassingly parallel)
+2. No shared state is needed between calculations
+3. The work is CPU-bound rather than I/O-bound
+4. Modern processors have plenty of cores (your M4 Pro Mac mini likely has 12 cores)
+
+We could use something like Lua Lanes or luaproc to divide the work. A simple approach would be to:
+
+1. Split the input lines into N chunks (where N is the number of cores)
+2. Process each chunk in parallel
+3. Combine the results at the end
+
+Would you like to try implementing a parallel version? We could keep our existing correct solution and just add parallelization to speed it up. I can help with the parallel implementation if you're interested.
+
+The speedup might not be exactly linear (12x with 12 cores) due to some overhead, but we should still see a significant improvement from the current 21 seconds, possibly getting it down to 2-3 seconds.
+
+
+Sure, do you know how to do this in Lua?
+
+Yes! One of the most straightforward ways to do this in Lua is using the `lanes` library. First, we'll need to install it:
+
+```bash
+luarocks install lanes
+```
+
+Then we can modify our program like this:
+
+```lua
+local lanes = require "lanes"
+
+-- First set up our generator for lanes
+local gen = lanes.gen("*", -- Use all globals
+    function(chunk_of_lines)
+        local total = 0
+        for _, line in ipairs(chunk_of_lines) do
+            local test_value, numbers = parse_line(line)
+            local num_operators = #numbers - 1
+            local operator_combinations = generate_operator_combinations(num_operators)
+
+            for _, operators in ipairs(operator_combinations) do
+                local result = evaluate_expression(numbers, operators)
+                if result == test_value then
+                    total = total + test_value
+                    break
+                end
+            end
+        end
+        return total
+    end
+)
+
+-- Main program
+local lines = lines_from("input.txt")
+local num_cores = 12  -- Or we could try to detect this
+local chunk_size = math.ceil(#lines / num_cores)
+local lanes = {}
+
+-- Create chunks and start processing
+for i = 1, num_cores do
+    local start_idx = (i-1) * chunk_size + 1
+    local end_idx = math.min(i * chunk_size, #lines)
+    local chunk = {}
+    for j = start_idx, end_idx do
+        chunk[#chunk + 1] = lines[j]
+    end
+    lanes[i] = gen(chunk)
+end
+
+-- Collect results
+local total = 0
+for i = 1, #lanes do
+    total = total + lanes[i]:join()
+end
+
+print("Total:", total)
+```
+
+This should distribute the work across your available cores. All the core logic (parse_line, generate_operator_combinations, evaluate_expression) stays exactly the same.
+
+Would you like to try this version? We should time it to see how much speedup we get.
+
+Note: If you run into any issues installing lanes, we could also try luaproc or another parallel processing library. Lanes is just one of the more mature options.
+
+How do we detect the number of cores using luarocks?
+
+Here's how we can detect the number of CPU cores in Lua. On Unix-like systems (including macOS), we can read from `/proc/cpuinfo` or use `sysctl`. Since you're on a Mac, here's the appropriate code:
+
+```lua
+function get_cpu_cores()
+    local handle = io.popen("sysctl -n hw.ncpu")
+    if handle then
+        local result = handle:read("*a")
+        handle:close()
+        return tonumber(result)
+    end
+    return 4  -- fallback default if we can't detect
+end
+
+-- Then use it like:
+local num_cores = get_cpu_cores()
+print("Detected " .. num_cores .. " cores")
+```
+
+This will use the macOS `sysctl` command to get the number of logical cores (including hyperthreading). On your M4 Pro Mac mini, it should return 12 (8 performance cores + 4 efficiency cores).
+
+Would you like me to update the parallel processing code to use this automatic detection?
+
+
+I get an error in the output:
+```lua: error loading module 'lanes.core' from file '/opt/homebrew/lib/lua/5.4/lanes/core.so':
+	dlopen(/opt/homebrew/lib/lua/5.4/lanes/core.so, 0x0006): symbol not found in flat namespace '_STACK_GROW'```
+
+Ah, looks like there might be a compatibility issue with Lanes and Lua 5.4. Let's try a simpler approach using Lua's built-in `io.popen` to spawn multiple processes. While not as elegant as Lanes, it should work without additional dependencies:
+
+```lua
+function get_cpu_cores()
+    local handle = io.popen("sysctl -n hw.ncpu")
+    if handle then
+        local result = handle:read("*a")
+        handle:close()
+        return tonumber(result)
+    end
+    return 4  -- fallback default
+end
+
+-- Save the chunk processor as a separate script
+function write_chunk_processor()
+    local script = [[
+package.path = package.path .. ";../lib/?.lua"
+require "file"
+require "util"
+
+-- [Insert all your helper functions here: parse_line, generate_operator_combinations, evaluate_expression]
+
+local chunk_file = arg[1]
+local lines = lines_from(chunk_file)
+local total = 0
+
+for _, line in ipairs(lines) do
+    local test_value, numbers = parse_line(line)
+    local num_operators = #numbers - 1
+    local operator_combinations = generate_operator_combinations(num_operators)
+
+    for _, operators in ipairs(operator_combinations) do
+        local result = evaluate_expression(numbers, operators)
+        if result == test_value then
+            total = total + test_value
+            break
+        end
+    end
+end
+
+print(total)
+]]
+    local f = io.open("chunk_processor.lua", "w")
+    f:write(script)
+    f:close()
+end
+
+-- Main program
+local num_cores = get_cpu_cores()
+print("Running with " .. num_cores .. " cores")
+
+local lines = lines_from("input.txt")
+local chunk_size = math.ceil(#lines / num_cores)
+
+-- Write chunk files
+local chunk_files = {}
+for i = 1, num_cores do
+    local chunk_name = string.format("chunk_%d.txt", i)
+    local f = io.open(chunk_name, "w")
+    local start_idx = (i-1) * chunk_size + 1
+    local end_idx = math.min(i * chunk_size, #lines)
+    for j = start_idx, end_idx do
+        f:write(lines[j] .. "\n")
+    end
+    f:close()
+    table.insert(chunk_files, chunk_name)
+end
+
+-- Write the processor script
+write_chunk_processor()
+
+-- Start all processes
+local processes = {}
+for i, chunk_file in ipairs(chunk_files) do
+    local handle = io.popen(string.format("lua chunk_processor.lua %s", chunk_file))
+    table.insert(processes, handle)
+end
+
+-- Collect results
+local total = 0
+for _, handle in ipairs(processes) do
+    local result = handle:read("*a")
+    total = total + tonumber(result)
+end
+
+-- Clean up
+for _, handle in ipairs(processes) do
+    handle:close()
+end
+for _, file in ipairs(chunk_files) do
+    os.remove(file)
+end
+os.remove("chunk_processor.lua")
+
+print("Total:", total)
+```
+
+This approach:
+1. Splits the input into separate files
+2. Creates a separate script file containing the processing logic
+3. Spawns multiple Lua processes to handle each chunk
+4. Collects and combines the results
+
+It's a bit more hacky than using a proper parallel processing library, but it should work with your standard Lua installation. Would you like to try this version?
+
+Ok, I got it working!
+original:
+```
+➜  07 git:(main) ✗ time lua Day_07.lua
+Part 1:	6392012777720
+Part 2:	61561126043536
+lua Day_07.lua  21.53s user 0.67s system 99% cpu 22.212 total
+```
+
+Parallel:
+```
+➜  07 git:(main) ✗ time lua Day_07.lua
+Part 1:	6392012777720
+Running with 14 cores
+Part 2:	61561126043536
+lua Day_07.lua  22.75s user 1.78s system 734% cpu 3.342 total
+```
+
+
+That's fantastic! Let's break down what we're seeing:
+
+1. Original: 22.212 seconds total, running at ~100% CPU (single core)
+2. Parallel: 3.342 seconds total, running at 734% CPU (effectively using multiple cores)
+
+The 734% CPU utilization shows we're using about 7.34 cores effectively out of the 14 available. This is actually quite good parallelization efficiency! We got about a 6.6x speedup (22.212/3.342).
+
+Not getting a full 14x speedup is normal due to:
+1. Some overhead in splitting/combining the work
+2. Not all cores being equal (M-series chips have performance and efficiency cores)
+3. Some system overhead in managing multiple processes
+
+Still, reducing the runtime from 22 seconds to 3.3 seconds is a significant improvement! This is a great example of how parallel processing can help with CPU-bound tasks, especially when the work can be easily divided (embarrassingly parallel problems like this one).
+
+Would you like to try any further optimizations, or shall we call this a success?
+
+I think we're good, better than good actually!  Thanks
+
+You're welcome! This was a great journey through both parts of Day 7, and we learned several valuable lessons:
+
+1. Sometimes the simpler solution (3^n operators) is better than a more complex optimization attempt
+2. When performance does become an issue, parallelization can be a powerful tool, especially for embarrassingly parallel problems
+3. Modern hardware (like your M-series Mac) can handle significant computational loads when properly utilized
+
+We went from a 22-second runtime to just over 3 seconds with parallelization, while keeping the core logic clean and understandable. That's a win in my book!
+
+Thanks for working through this with me. It was fun to explore different approaches and see how we could make significant performance improvements while maintaining code correctness!
